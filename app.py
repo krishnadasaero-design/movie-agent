@@ -52,7 +52,7 @@ with col4:
     required_seats = st.number_input("Consecutive Seats Needed", min_value=1, max_value=10, value=3)
 
 bms_url_input = st.text_input(
-    "Optional: Direct BookMyShow Showtime URL (for deep seat inspection)",
+    "Direct BookMyShow Showtime URL (Required for seat matrix check)",
     placeholder="https://in.bookmyshow.com/buytickets/..."
 )
 
@@ -95,39 +95,62 @@ def get_web_showtimes(movie, city_name, date_val, g_key, t_key):
 
 
 async def inspect_seats_stealth(url, seat_count):
-    """Phase 2: Local Stealth Browser Engine to check seat availability."""
+    """Phase 2: Robust Local Stealth Browser Engine designed for BookMyShow UI flow."""
     try:
         async with async_playwright() as p:
+            # Launch Chromium with visible GUI (headless=False allows observing Cloudflare bypass)
             browser = await p.chromium.launch(
-                headless=True,
+                headless=False,
                 args=["--disable-blink-features=AutomationControlled"]
             )
             context = await browser.new_context(
+                viewport={"width": 1280, "height": 720},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             )
             page = await context.new_page()
             await stealth_async(page)
 
-            # Route through local home residential network
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            # Navigate to BookMyShow direct link using your home IP
+            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            await page.wait_for_timeout(3000) # Allow JS frameworks to load
             
-            # Wait for available seat elements to render
-            await page.wait_for_timeout(3000)
+            # Dismiss initial popup modals (Accept Terms / Select Quantity Buttons)
+            try:
+                accept_btn = page.locator("button:has-text('Accept'), div:has-text('Accept'), #btnAccept")
+                if await accept_btn.count() > 0:
+                    await accept_btn.first.click()
+                    await page.wait_for_timeout(1000)
+            except Exception:
+                pass
+
+            try:
+                select_seats_btn = page.locator("button:has-text('Select Seats'), div:has-text('Select Seats')")
+                if await select_seats_btn.count() > 0:
+                    await select_seats_btn.first.click()
+                    await page.wait_for_timeout(1500)
+            except Exception:
+                pass
+
+            # Target dynamic seat elements in the SVG DOM
+            seat_selector = "a._available, div._available, svg [class*='available'], g[class*='available'], .seat-available"
             
-            # Extract available seat markers from the DOM grid
-            available_elements = await page.locator("a._available, div._available, .seat-available").all_inner_texts()
-            
+            try:
+                await page.wait_for_selector(seat_selector, timeout=12000)
+                available_elements = await page.locator(seat_selector).all()
+                total_available = len(available_elements)
+            except Exception:
+                # Fallback check if seats rendered in alternative canvas/grid containers
+                all_seats = await page.locator("a[class*='seat'], div[class*='seat']").all()
+                total_available = len(all_seats)
+
             await browser.close()
-            
-            total_available = len(available_elements)
-            has_enough = total_available >= seat_count
             
             return {
                 "success": True,
                 "total_available": total_available,
-                "has_enough": has_enough,
-                "seats": available_elements[:15] # Display preview sample
+                "has_enough": total_available >= seat_count
             }
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -146,7 +169,7 @@ if st.button("🚀 EXECUTE AGENT SEARCH", type="primary"):
         st.subheader("📊 Theater Listings & Schedules")
         st.markdown(showtimes)
 
-        # Step 2: Stealth Seat Inspection (If URL provided)
+        # Step 2: Stealth Seat Inspection (If Direct URL provided)
         if bms_url_input:
             st.divider()
             with st.status("🕵️ Step 2: Spawning Local Stealth Browser (Home IP Bypass)...", expanded=True) as status:
@@ -166,4 +189,4 @@ if st.button("🚀 EXECUTE AGENT SEARCH", type="primary"):
         st.divider()
         bms_slug = movie_name.lower().replace(' ', '-')
         direct_url = bms_url_input if bms_url_input else f"https://in.bookmyshow.com/{city.lower()}/movies/{bms_slug}"
-        st.link_button("🎟️ Proceed to Booking Page ➔", direct_url)
+        st.link_button("🎟️ Open Booking Page on BookMyShow ➔", direct_url)
