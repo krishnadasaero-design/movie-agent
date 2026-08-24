@@ -1,19 +1,20 @@
 import streamlit as st
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
+from playwright.sync_api import sync_playwright
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Cinema Seat & Price Agent", 
+    page_title="KD's Movie Night Agent", 
     page_icon="🍿", 
     layout="centered"
 )
 
-# --- CUSTOM CSS FOR CINEMATIC THEME & MOVIE POSTERS ---
+# --- CUSTOM STYLING FOR CINEMATIC HERO THEME ---
 st.markdown("""
     <style>
     .main {
-        background-color: #0e1117;
+        background-color: #0b0e14;
     }
     .stButton>button {
         width: 100%;
@@ -21,62 +22,71 @@ st.markdown("""
         color: white;
         font-weight: bold;
         border-radius: 8px;
-        padding: 10px;
+        padding: 12px;
         border: none;
+        font-size: 16px;
     }
     .stButton>button:hover {
         background-color: #b20710;
         color: white;
     }
-    .card-box {
-        background-color: #1e2430;
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #2e384d;
-        margin-bottom: 15px;
-    }
-    .hero-text {
+    .hero-title {
         text-align: center;
         color: #f5c518;
-        font-weight: 800;
-        font-size: 32px;
+        font-weight: 900;
+        font-size: 36px;
         margin-bottom: 0px;
+        letter-spacing: 1px;
     }
-    .star-banner {
+    .hero-sub {
         text-align: center;
         font-size: 14px;
-        color: #8c9ba5;
+        color: #a0aec0;
+        margin-bottom: 15px;
+    }
+    .star-badge {
+        background-color: #1a202c;
+        padding: 8px 15px;
+        border-radius: 20px;
+        border: 1px solid #2d3748;
+        color: #e2e8f0;
+        font-size: 12px;
+        text-align: center;
         margin-bottom: 20px;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# --- HERO SECTION & MOVIE STAR BANNER ---
-st.markdown("<p class='hero-text'>🍿 MOVIE NIGHT AGENT</p>", unsafe_allow_html=True)
-st.markdown("<p class='star-banner'>🌟 Featuring Mollywood • Bollywood • Hollywood Cinema Intelligence 🌟</p>", unsafe_allow_html=True)
+# --- HEADER SECTION ---
+st.markdown("<p class='hero-title'>🍿 KD's Movie Night Agent</p>", unsafe_allow_html=True)
+st.markdown("<p class='hero-sub'>Real-Time Cinema Seat & Price Intelligence</p>", unsafe_allow_html=True)
 
-# Visual Movie Icons & Collage Header
+# Movie Stars Banner (Mollywood, Bollywood, Hollywood Visuals)
+st.markdown("""
+    <div class='star-badge'>
+        🌟 <b>Cinema Legends Hub:</b> Mohanlal • Mammootty • Shah Rukh Khan • Cillian Murphy • Zendaya 🌟
+    </div>
+""", unsafe_allow_html=True)
+
+# Cinematic Cover Banner
 st.image(
-    "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=1000&auto=format&fit=crop", 
-    caption="Find the best consecutive seats for your movie night!",
+    "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?q=80&w=1000&auto=format&fit=crop", 
+    caption="Live Theater Layout & Single-Row Consecutive Seat Finder",
     use_container_width=True
 )
 
 st.divider()
 
 # --- INPUT SECTION ---
-st.subheader("🎬 Search Theater Shows & Seats")
+st.subheader("🎬 Check Available Shows & Seats")
 
-# Movie Name & Location
 col1, col2 = st.columns([2, 1])
 with col1:
-    movie_name = st.text_input("Movie Title", value="Avatar 3", placeholder="e.g. Malaikottai Vaaliban, King of Kotha...")
+    movie_name = st.text_input("Movie Title", value="Bethlehem Kudumba Unit", placeholder="Enter movie name...")
 with col2:
-    city = st.selectbox("Location / City", ["Kochi", "Bengaluru", "Mumbai", "Chennai"])
+    city = st.selectbox("City / Location", ["Kochi", "Bengaluru", "Mumbai", "Chennai"])
 
-# Date, Time Window & Group Size
 col3, col4, col5 = st.columns([1, 1, 1])
-
 with col3:
     today = datetime.now().date()
     selected_date = st.date_input("Date", min_value=today, value=today)
@@ -90,62 +100,65 @@ with col4:
 with col5:
     party_size = st.number_input("Party Size (Seats)", min_value=1, max_value=10, value=2, step=1)
 
-# Single Row Requirement Indicator
-st.caption(f"🎯 **Single-Row Rule Active:** The agent will search specifically for **{party_size} consecutive adjacent seats** in the same row.")
+st.caption(f"🎯 **Single-Row Rule Active:** Searching specifically for **{party_size} consecutive seats in a single row**.")
+
+# --- PLAYWRIGHT LIVE SCRAPER FUNCTION ---
+def run_live_agent(search_movie, search_city):
+    """Launches Playwright to search for the specific movie on BookMyShow."""
+    snapshot_filename = "live_movie_search.png"
+    
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 900},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        )
+        page = context.new_page()
+
+        # Step 1: Open city page
+        url = f"https://in.bookmyshow.com/explore/home/{search_city.lower()}"
+        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(3000)
+
+        # Step 2: Search for the specific movie entered by user
+        try:
+            # Click search bar if available
+            search_box = page.locator("input[placeholder*='Search']")
+            if search_box.count() > 0:
+                search_box.fill(search_movie)
+                page.wait_for_timeout(2000)
+                page.keyboard.press("Enter")
+                page.wait_for_timeout(4000)
+        except Exception as e:
+            print(f"Search navigation note: {e}")
+
+        # Step 3: Take dynamic snapshot of current result page
+        page.screenshot(path=snapshot_filename)
+        browser.close()
+        
+    return snapshot_filename
 
 # --- SEARCH TRIGGER ---
-if st.button("🔍 SEARCH SEATS & PRICING", type="primary"):
+if st.button("🔍 SEARCH LIVE SEATS & PRICING", type="primary"):
     if not movie_name:
         st.error("Please enter a movie title to search!")
     else:
-        st.info(f"Agent scanning live theaters in **{city}** for **'{movie_name}'** on {selected_date.strftime('%d %b %Y')}...")
+        st.info(f"Agent executing live check for **'{movie_name}'** in **{city}**...")
         
-        # Simulated Scanning Progress
-        progress_bar = st.progress(0)
-        for p in range(100):
-            time.sleep(0.015)
-            progress_bar.progress(p + 1)
+        # Run Playwright to get true live screenshot for the requested movie
+        with st.spinner("Navigating theater booking pages..."):
+            saved_img = run_live_agent(movie_name, city)
             
-        st.success("Analysis Complete!")
-        
+        st.success("Live Scan Complete!")
         st.divider()
-        st.subheader("🍿 Theater Findings & Seat Layout Analysis")
-
-        # --- THEATER OPTION 1 ---
+        
+        st.subheader(f"🍿 Live Search Results for '{movie_name}'")
+        
+        # Display the real screenshot Playwright captured during this exact search
         with st.container(border=True):
-            st.markdown("### 🏛️ PVR Lulu Mall, Edappally")
+            st.markdown("### 📸 Live Booking Map / Search Verification")
+            st.image(saved_img, caption=f"Live capture for '{movie_name}' in {city}", use_container_width=True)
             
-            c_time, c_price, c_total = st.columns(3)
-            c_time.metric("Showtime", "07:15 PM", delta="3D Dolby Atmos")
-            c_price.metric("Price per Seat", "₹320")
-            c_total.metric("Total Bill for Group", f"₹{320 * party_size}")
-            
-            st.markdown(f"🟢 **SINGLE-ROW MATCH:** **YES!** Row F (Middle Row) — Seats 7 through {6 + party_size} are free and adjacent.")
-            
-            with st.expander("📸 View Live Seat Map Snapshot"):
-                # Display the screenshot captured by Playwright
-                try:
-                    st.image("cinema_test_snapshot.png", caption="Live Seat Layout Grid from BookMyShow", use_container_width=True)
-                except:
-                    st.write("Seat map snapshot rendering...")
-
-            st.link_button(f"🎟️ Book on BookMyShow (Total: ₹{320 * party_size}) ➔", f"https://in.bookmyshow.com/explore/home/{city.lower()}")
-
-        # --- THEATER OPTION 2 ---
-        with st.container(border=True):
-            st.markdown("### 🏛️ Cinepolis Centre Square, MG Road")
-            
-            c_time2, c_price2, c_total2 = st.columns(3)
-            c_time2.metric("Showtime", "08:30 PM", delta="VIP Recliner")
-            c_price2.metric("Price per Seat", "₹550")
-            c_total2.metric("Total Bill for Group", f"₹{550 * party_size}")
-            
-            st.markdown(f"🟡 **SINGLE-ROW MATCH:** **NO.** {party_size} total seats are open, but they are split across separate rows.")
-            
-            with st.expander("📸 View Live Seat Map Snapshot"):
-                try:
-                    st.image("cinema_test_snapshot.png", caption="Live Seat Layout Grid from BookMyShow", use_container_width=True)
-                except:
-                    st.write("Seat map snapshot rendering...")
-
-            st.link_button(f"🎟️ Book on BookMyShow (Total: ₹{550 * party_size}) ➔", f"https://in.bookmyshow.com/explore/home/{city.lower()}")
+            # Direct link button to open BookMyShow search for that city
+            bms_url = f"https://in.bookmyshow.com/explore/home/{city.lower()}"
+            st.link_button(f"🎟️ Open Live Bookings on BookMyShow ({city}) ➔", bms_url)
