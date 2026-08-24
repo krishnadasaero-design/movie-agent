@@ -2,18 +2,16 @@ import os
 import requests
 from bs4 import BeautifulSoup
 import streamlit as st
-from datetime import datetime
 from google import genai
 
 # =========================================================
-# 🔑 STEP 1: PASTE YOUR API KEYS HERE
-# =========================================================
-# Replace the text inside the quotes with your real keys
-# =========================================================
-# 🔑 STEP 1: READ KEYS SECURELY FROM STREAMLIT SECRETS
+# 🔑 1. READ API KEYS SECURELY FROM STREAMLIT SECRETS
 # =========================================================
 SCRAPERAPI_KEY = st.secrets.get("SCRAPERAPI_KEY", "")
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+
+# =========================================================
+# 2. PAGE CONFIGURATION & STYLING (STREAMLIT UI)
 # =========================================================
 st.set_page_config(
     page_title="KD's AI Movie Night Agent", 
@@ -41,7 +39,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown("<p class='hero-title'>🍿 KD's AI Movie Agent</p>", unsafe_allow_html=True)
-st.markdown("<p class='hero-sub'>Powered by ScraperAPI + Google Gemini 2.5 Flash</p>", unsafe_allow_html=True)
+st.markdown("<p class='hero-sub'>Powered by ScraperAPI + Google Gemini 3.6 Flash</p>", unsafe_allow_html=True)
 st.divider()
 
 # =========================================================
@@ -86,7 +84,7 @@ def fetch_raw_bms_data(city_name, api_key):
 # 5. GEMINI AI AGENT ENGINE (REASONING & EXTRACTION)
 # =========================================================
 def analyze_with_gemini(raw_text, target_movie, target_city, party, key):
-    """Uses Google GenAI SDK to analyze raw data."""
+    """Uses Google GenAI SDK to analyze raw scraped data."""
     try:
         # Initialize Google GenAI client
         client = genai.Client(api_key=key)
@@ -109,8 +107,9 @@ def analyze_with_gemini(raw_text, target_movie, target_city, party, key):
         4. Keep your answer clear, well-structured, and encouraging.
         """
         
+        # Updated to gemini-3.6-flash to solve 404 deprecation error
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.6-flash',
             contents=prompt
         )
         return response.text
@@ -121,15 +120,15 @@ def analyze_with_gemini(raw_text, target_movie, target_city, party, key):
 # 6. AGENT EXECUTION TRIGGER
 # =========================================================
 if st.button("🚀 RUN AI AGENT SEARCH", type="primary"):
-    if SCRAPERAPI_KEY == "PASTE_YOUR_SCRAPERAPI_KEY_HERE" or GEMINI_API_KEY == "PASTE_YOUR_GEMINI_API_KEY_HERE":
-        st.error("⚠️ Please replace the placeholder API keys at the top of your app.py script with your actual keys!")
+    if not SCRAPERAPI_KEY or not GEMINI_API_KEY:
+        st.error("⚠️ API Keys are missing! Make sure to set SCRAPERAPI_KEY and GEMINI_API_KEY inside your Streamlit Cloud Secrets settings.")
     else:
         with st.status("🤖 Agent at work...", expanded=True) as status:
             st.write("📡 Step 1: Requesting web data via ScraperAPI (bypassing Cloudflare)...")
             raw_data = fetch_raw_bms_data(city, SCRAPERAPI_KEY)
             
             if raw_data:
-                st.write("🧠 Step 2: Passing raw data to Gemini 2.5 Flash for reasoning...")
+                st.write("🧠 Step 2: Passing raw data to Gemini 3.6 Flash for reasoning...")
                 ai_analysis = analyze_with_gemini(raw_data, movie_name, city, party_size, GEMINI_API_KEY)
                 status.update(label="✅ Search Complete!", state="complete", expanded=False)
                 
@@ -140,4 +139,4 @@ if st.button("🚀 RUN AI AGENT SEARCH", type="primary"):
                 st.link_button(f"🎟️ Open Direct Bookings on BookMyShow ({city}) ➔", bms_url)
             else:
                 status.update(label="❌ Scraping Failed", state="error")
-                st.error("Could not fetch data. Please check if your ScraperAPI key is valid.")
+                st.error("Could not fetch data. Please check if your ScraperAPI key in Streamlit Secrets is valid.")
