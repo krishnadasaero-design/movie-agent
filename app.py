@@ -7,7 +7,7 @@ from playwright.async_api import async_playwright
 from playwright_stealth import stealth_async
 
 # =========================================================
-# 1. PAGE & API CONFIGURATION
+# 1. APPLICATION & SECRETS CONFIGURATION
 # =========================================================
 st.set_page_config(
     page_title="🍿 Movie Night Agent", 
@@ -18,7 +18,6 @@ st.set_page_config(
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 TAVILY_API_KEY = st.secrets.get("TAVILY_API_KEY", "")
 
-# Custom CSS
 st.markdown("""
     <style>
     .stButton>button {
@@ -36,7 +35,7 @@ st.markdown("<p class='hero-sub'>Real-Time Showtimes & Local Stealth Seat Inspec
 st.divider()
 
 # =========================================================
-# 2. USER INPUTS
+# 2. USER CONTROL PANEL
 # =========================================================
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -59,16 +58,16 @@ bms_url_input = st.text_input(
 st.divider()
 
 # =========================================================
-# 3. CORE ENGINES
+# 3. AGENT ENGINES
 # =========================================================
 
 def get_web_showtimes(movie, city_name, date_val, g_key, t_key):
-    """Phase 1: Fast & Free Showtime Aggregation via Tavily + Gemini."""
+    """Phase 1: High-level showtime discovery using Tavily + Gemini."""
     try:
         formatted_date = date_val.strftime('%d %B %Y')
         search_query = f"{movie} movie showtimes {city_name} {formatted_date}"
         
-        # 1. Web Search
+        # 1. Fetch search data
         tavily = TavilyClient(api_key=t_key)
         search_results = tavily.search(query=search_query, max_results=5)
         
@@ -76,14 +75,14 @@ def get_web_showtimes(movie, city_name, date_val, g_key, t_key):
         for item in search_results.get("results", []):
             raw_text += f"\nSource: {item.get('url')}\nContent: {item.get('content')}\n---"
 
-        # 2. Extract with Gemini (No Grounding Tool = 100% Free Quota)
+        # 2. Process plain text with Gemini
         client = genai.Client(api_key=g_key)
         prompt = f"""
-        Extract theater names and showtimes for '{movie}' in {city_name} on {formatted_date} from this web data:
+        Extract theater names and showtimes for '{movie}' in {city_name} on {formatted_date} from this raw search data:
         {raw_text}
 
-        Format using simple Markdown bullet points grouped by Theater Name. 
-        If no schedules are found, reply with "No listings found."
+        Format using Markdown bullet points grouped by Theater Name. 
+        If no listings are found, state "No listings found."
         """
         response = client.models.generate_content(
             model='gemini-3.5-flash-lite',
@@ -91,16 +90,16 @@ def get_web_showtimes(movie, city_name, date_val, g_key, t_key):
         )
         return response.text
     except Exception as e:
-        return f"Showtime Search Error: {e}"
+        return f"Showtime Aggregation Error: {e}"
 
 
 async def inspect_seats_stealth(url, seat_count):
-    """Phase 2: Robust Local Stealth Browser Engine designed for BookMyShow UI flow."""
+    """Phase 2: Local Playwright engine to inspect dynamic DOM seat elements."""
     try:
         async with async_playwright() as p:
-            # Launch Chromium with visible GUI (headless=False allows observing Cloudflare bypass)
+            # Launch local Chromium engine with automation flags disabled
             browser = await p.chromium.launch(
-                headless=False,
+                headless=False,  # Runs visually to verify Cloudflare bypass
                 args=["--disable-blink-features=AutomationControlled"]
             )
             context = await browser.new_context(
@@ -110,11 +109,11 @@ async def inspect_seats_stealth(url, seat_count):
             page = await context.new_page()
             await stealth_async(page)
 
-            # Navigate to BookMyShow direct link using your home IP
+            # Route through residential connection
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            await page.wait_for_timeout(3000) # Allow JS frameworks to load
+            await page.wait_for_timeout(3000)
             
-            # Dismiss initial popup modals (Accept Terms / Select Quantity Buttons)
+            # Dismiss interstitial modals
             try:
                 accept_btn = page.locator("button:has-text('Accept'), div:has-text('Accept'), #btnAccept")
                 if await accept_btn.count() > 0:
@@ -131,7 +130,7 @@ async def inspect_seats_stealth(url, seat_count):
             except Exception:
                 pass
 
-            # Target dynamic seat elements in the SVG DOM
+            # Target active available seat nodes within the rendered DOM / SVG tree
             seat_selector = "a._available, div._available, svg [class*='available'], g[class*='available'], .seat-available"
             
             try:
@@ -139,7 +138,7 @@ async def inspect_seats_stealth(url, seat_count):
                 available_elements = await page.locator(seat_selector).all()
                 total_available = len(available_elements)
             except Exception:
-                # Fallback check if seats rendered in alternative canvas/grid containers
+                # Fallback selector for alternative layout structures
                 all_seats = await page.locator("a[class*='seat'], div[class*='seat']").all()
                 total_available = len(all_seats)
 
@@ -155,24 +154,24 @@ async def inspect_seats_stealth(url, seat_count):
         return {"success": False, "error": str(e)}
 
 # =========================================================
-# 4. EXECUTION CONTROLLER
+# 4. ORCHESTRATION & DISPLAY
 # =========================================================
 if st.button("🚀 EXECUTE AGENT SEARCH", type="primary"):
     if not GEMINI_API_KEY or not TAVILY_API_KEY:
         st.error("⚠️ Please configure GEMINI_API_KEY and TAVILY_API_KEY in secrets!")
     else:
-        # Step 1: Showtime Discovery
-        with st.status("🌐 Step 1: Aggregating theater listings via Tavily + Gemini...", expanded=True) as status:
+        # Phase 1: Showtime Discovery
+        with st.status("🌐 Phase 1: Aggregating theater listings via Tavily + Gemini...", expanded=True) as status:
             showtimes = get_web_showtimes(movie_name, city, selected_date, GEMINI_API_KEY, TAVILY_API_KEY)
             status.update(label="✅ Showtime Search Complete!", state="complete", expanded=False)
         
         st.subheader("📊 Theater Listings & Schedules")
         st.markdown(showtimes)
 
-        # Step 2: Stealth Seat Inspection (If Direct URL provided)
+        # Phase 2: Stealth Seat Inspection
         if bms_url_input:
             st.divider()
-            with st.status("🕵️ Step 2: Spawning Local Stealth Browser (Home IP Bypass)...", expanded=True) as status:
+            with st.status("🕵️ Phase 2: Spawning Local Stealth Browser (Home IP Bypass)...", expanded=True) as status:
                 seat_data = asyncio.run(inspect_seats_stealth(bms_url_input, required_seats))
                 status.update(label="✅ Seat Inspection Complete!", state="complete", expanded=False)
             
