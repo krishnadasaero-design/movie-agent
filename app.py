@@ -1,6 +1,20 @@
+import os
+import subprocess
 import streamlit as st
 import time
 from datetime import datetime
+
+# --- AUTO-INSTALL PLAYWRIGHT BINARIES ON STREAMLIT CLOUD ---
+def ensure_playwright_browsers():
+    """Ensures Chromium binaries are installed inside the cloud Linux environment."""
+    try:
+        subprocess.run(["playwright", "install", "chromium"], check=True)
+    except Exception as e:
+        print(f"Playwright binary install note: {e}")
+
+# Run binary check automatically on app launch
+ensure_playwright_browsers()
+
 from playwright.sync_api import sync_playwright
 
 # --- PAGE CONFIGURATION ---
@@ -46,11 +60,11 @@ st.markdown("""
     }
     .star-badge {
         background-color: #1a202c;
-        padding: 8px 15px;
+        padding: 10px 15px;
         border-radius: 20px;
         border: 1px solid #2d3748;
         color: #e2e8f0;
-        font-size: 12px;
+        font-size: 13px;
         text-align: center;
         margin-bottom: 20px;
     }
@@ -104,39 +118,43 @@ st.caption(f"🎯 **Single-Row Rule Active:** Searching specifically for **{part
 
 # --- PLAYWRIGHT LIVE SCRAPER FUNCTION ---
 def run_live_agent(search_movie, search_city):
-    """Launches Playwright to search for the specific movie on BookMyShow."""
+    """Launches Playwright safely on Linux/Cloud environments to capture theater search."""
     snapshot_filename = "live_movie_search.png"
     
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 900},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        )
-        page = context.new_page()
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+            )
+            context = browser.new_context(
+                viewport={"width": 1280, "height": 900},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
 
-        # Step 1: Open city page
-        url = f"https://in.bookmyshow.com/explore/home/{search_city.lower()}"
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(3000)
+            # Step 1: Open city page
+            url = f"https://in.bookmyshow.com/explore/home/{search_city.lower()}"
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(3000)
 
-        # Step 2: Search for the specific movie entered by user
-        try:
-            # Click search bar if available
-            search_box = page.locator("input[placeholder*='Search']")
-            if search_box.count() > 0:
-                search_box.fill(search_movie)
-                page.wait_for_timeout(2000)
-                page.keyboard.press("Enter")
-                page.wait_for_timeout(4000)
-        except Exception as e:
-            print(f"Search navigation note: {e}")
+            # Step 2: Try to dynamically search for the movie title
+            try:
+                search_box = page.locator("input[placeholder*='Search']")
+                if search_box.count() > 0:
+                    search_box.fill(search_movie)
+                    page.wait_for_timeout(1500)
+                    page.keyboard.press("Enter")
+                    page.wait_for_timeout(3000)
+            except Exception as nav_err:
+                print(f"Navigation search note: {nav_err}")
 
-        # Step 3: Take dynamic snapshot of current result page
-        page.screenshot(path=snapshot_filename)
-        browser.close()
-        
-    return snapshot_filename
+            page.screenshot(path=snapshot_filename)
+            browser.close()
+            return snapshot_filename
+    except Exception as err:
+        st.error(f"Live Playwright execution error: {err}")
+        return None
 
 # --- SEARCH TRIGGER ---
 if st.button("🔍 SEARCH LIVE SEATS & PRICING", type="primary"):
@@ -145,20 +163,18 @@ if st.button("🔍 SEARCH LIVE SEATS & PRICING", type="primary"):
     else:
         st.info(f"Agent executing live check for **'{movie_name}'** in **{city}**...")
         
-        # Run Playwright to get true live screenshot for the requested movie
         with st.spinner("Navigating theater booking pages..."):
             saved_img = run_live_agent(movie_name, city)
             
-        st.success("Live Scan Complete!")
-        st.divider()
-        
-        st.subheader(f"🍿 Live Search Results for '{movie_name}'")
-        
-        # Display the real screenshot Playwright captured during this exact search
-        with st.container(border=True):
-            st.markdown("### 📸 Live Booking Map / Search Verification")
-            st.image(saved_img, caption=f"Live capture for '{movie_name}' in {city}", use_container_width=True)
+        if saved_img:
+            st.success("Live Scan Complete!")
+            st.divider()
             
-            # Direct link button to open BookMyShow search for that city
-            bms_url = f"https://in.bookmyshow.com/explore/home/{city.lower()}"
-            st.link_button(f"🎟️ Open Live Bookings on BookMyShow ({city}) ➔", bms_url)
+            st.subheader(f"🍿 Live Search Results for '{movie_name}'")
+            
+            with st.container(border=True):
+                st.markdown("### 📸 Live Booking Map / Search Verification")
+                st.image(saved_img, caption=f"Live capture for '{movie_name}' in {city}", use_container_width=True)
+                
+                bms_url = f"https://in.bookmyshow.com/explore/home/{city.lower()}"
+                st.link_button(f"🎟️ Open Live Bookings on BookMyShow ({city}) ➔", bms_url)
