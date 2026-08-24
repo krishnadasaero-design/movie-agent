@@ -68,9 +68,10 @@ with col5:
 st.divider()
 
 # =========================================================
-# 4. DATA SCRAPER & AI ANALYSIS
+# 4. DATA SCRAPER ENGINE
 # =========================================================
 def fetch_bms_raw(city_name, api_key):
+    """Fetches raw webpage text via ScraperAPI."""
     target_url = f"https://in.bookmyshow.com/explore/movies-{city_name.lower()}"
     proxy_url = f"http://api.scraperapi.com?api_key={api_key}&url={target_url}&render=true"
     try:
@@ -82,29 +83,31 @@ def fetch_bms_raw(city_name, api_key):
     except Exception:
         return None
 
+# =========================================================
+# 5. STRICTLY GROUNDED GEMINI AI ENGINE
+# =========================================================
 def analyze_and_structure_shows(raw_text, movie, city_name, party, target_date, window, key):
+    """Analyzes raw data while preventing hallucinated showtimes/pricing."""
     try:
         client = genai.Client(api_key=key)
         
         prompt = f"""
-        You are a cinema booking logic agent for {city_name}. 
-        User wants to watch: '{movie}' for a party of {party} people on {target_date.strftime('%d %b %Y')}.
-        Preferred Time Window: {window}.
+        You are a strict data extraction agent for cinema bookings in {city_name}.
+        Target Movie: '{movie}'
+        Date Requested: {target_date.strftime('%d %b %Y')}
+        Preferred Time Window: {window}
+        Party Size: {party}
         
-        Scraped page text snippet:
+        RAW SCRAPED DATA FROM BOOKMYSHOW:
         {raw_text}
         
-        INSTRUCTIONS:
-        1. Evaluate theater options in {city_name} (e.g., PVR Lulu Mall, Cinépolis Centre Square, Shenoys, etc.) for target date {target_date.strftime('%d %b %Y')}.
-        2. Format output strictly into structured cards for 3 top theaters in {city_name}:
-        
-        ### 🏛️ [Theater Name]
-        * **Showtime & Format:** [e.g., 07:15 PM | 3D Dolby Atmos]
-        * **Ticket Price:** ₹[Price] / seat (**Total for {party}: ₹[Total Price]**)
-        * **Single-Row Match:** [YES / NO] (Detail exact row/seats, e.g., Row F Seats 7 & 8 free)
-        * **Best Value:** [YES / NO]
-        * **Status Note:** [Brief analysis of seat availability for {party} people]
-        ---
+        STRICT INSTRUCTIONS:
+        1. DO NOT fabricate, invent, or guess showtimes, ticket prices, or seat availability.
+        2. Verify if the movie '{movie}' is explicitly listed in the scraped text for {city_name}.
+        3. If specific theater showtimes and ticket prices are present in the text, extract them cleanly.
+        4. If the scraped text ONLY contains general city directory info (lacking deep theater schedules or seat maps), clearly state:
+           - Movie presence status in {city_name}.
+           - A clear note explaining that live showtimes/seats require opening the specific movie URL on BookMyShow.
         """
         
         response = client.models.generate_content(
@@ -116,7 +119,7 @@ def analyze_and_structure_shows(raw_text, movie, city_name, party, target_date, 
         return f"Error generating analysis: {e}"
 
 # =========================================================
-# 5. EXECUTION BUTTON & DISPLAY
+# 6. EXECUTION BUTTON & DISPLAY
 # =========================================================
 if st.button("🔍 SEARCH SEATS & PRICING", type="primary"):
     if not SCRAPERAPI_KEY or not GEMINI_API_KEY:
@@ -126,13 +129,16 @@ if st.button("🔍 SEARCH SEATS & PRICING", type="primary"):
             st.write(f"📡 Step 1: Fetching live listings for {city}...")
             raw = fetch_bms_raw(city, SCRAPERAPI_KEY)
             
-            st.write(f"🧠 Step 2: Evaluating showtimes for {selected_date.strftime('%d %b %Y')} and consecutive row matches...")
-            result = analyze_and_structure_shows(raw, movie_name, city, party_size, selected_date, time_window, GEMINI_API_KEY)
-            
-            status.update(label="✅ Search Complete!", state="complete", expanded=False)
-        
-        st.subheader("📊 AGENT FINDINGS & SEATING ANALYSIS")
-        st.markdown(result)
+            if raw:
+                st.write(f"🧠 Step 2: Extracting verified data for '{movie_name}' on {selected_date.strftime('%d %b %Y')}...")
+                result = analyze_and_structure_shows(raw, movie_name, city, party_size, selected_date, time_window, GEMINI_API_KEY)
+                status.update(label="✅ Search Complete!", state="complete", expanded=False)
+                
+                st.subheader("📊 AGENT FINDINGS & SEATING ANALYSIS")
+                st.markdown(result)
+            else:
+                status.update(label="❌ Scraping Failed", state="error")
+                st.error("Failed to fetch data from BookMyShow. Please check your ScraperAPI credentials.")
         
         bms_url = f"https://in.bookmyshow.com/explore/movies-{city.lower()}"
         st.link_button(f"🎟️ Open BookMyShow ({city}) ➔", bms_url)
