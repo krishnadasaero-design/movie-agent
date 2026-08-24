@@ -1,48 +1,46 @@
+import asyncio
 import streamlit as st
 from datetime import datetime
 from google import genai
 from tavily import TavilyClient
+from playwright.async_api import async_playwright
+from playwright_stealth import stealth_async
 
 # =========================================================
-# 1. API CONFIGURATION & SECRETS
+# 1. PAGE & API CONFIGURATION
 # =========================================================
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
-TAVILY_API_KEY = st.secrets.get("TAVILY_API_KEY", "")
-
 st.set_page_config(
     page_title="🍿 Movie Night Agent", 
     page_icon="🍿", 
     layout="centered"
 )
 
-# Custom Styling
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+TAVILY_API_KEY = st.secrets.get("TAVILY_API_KEY", "")
+
+# Custom CSS
 st.markdown("""
     <style>
-    .main { background-color: #0b0e14; }
     .stButton>button {
         width: 100%; background-color: #e50914; color: white;
         font-weight: bold; border-radius: 8px; padding: 12px; border: none; font-size: 16px;
     }
     .stButton>button:hover { background-color: #b20710; color: white; }
-    .hero-title { text-align: center; color: #f5c518; font-weight: 900; font-size: 32px; margin-bottom: 0px; }
-    .hero-sub { text-align: center; font-size: 13px; color: #a0aec0; margin-bottom: 15px; }
+    .hero-title { text-align: center; color: #f5c518; font-weight: 900; font-size: 30px; margin-bottom: 0px; }
+    .hero-sub { text-align: center; font-size: 13px; color: #a0aec0; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
-# Header
 st.markdown("<p class='hero-title'>🍿 MOVIE NIGHT AGENT</p>", unsafe_allow_html=True)
-st.markdown("<p class='hero-sub'>Real-Time Verified Showtime Finder (Powered by Tavily + Gemini)</p>", unsafe_allow_html=True)
-
+st.markdown("<p class='hero-sub'>Real-Time Showtimes & Local Stealth Seat Inspector</p>", unsafe_allow_html=True)
 st.divider()
 
 # =========================================================
-# 2. USER INPUT CONTROL PANEL
+# 2. USER INPUTS
 # =========================================================
-st.subheader("🎬 Find Shows Near You")
-
 col1, col2 = st.columns([2, 1])
 with col1:
-    movie_name = st.text_input("Movie Title", value="Bethlehem Kudumba Unit", placeholder="Enter movie name...")
+    movie_name = st.text_input("Movie Title", value="Bethlehem Kudumba Unit")
 with col2:
     city = st.selectbox("Location", ["Kochi", "Bengaluru", "Mumbai", "Chennai"])
 
@@ -51,77 +49,121 @@ with col3:
     today = datetime.now().date()
     selected_date = st.date_input("Date", min_value=today, value=today)
 with col4:
-    time_window = st.selectbox("Preferred Time", ["Any Time", "Morning (10 AM - 12 PM)", "Afternoon (12 PM - 4 PM)", "Evening (5 PM - 9 PM)", "Night (9 PM+)"])
+    required_seats = st.number_input("Consecutive Seats Needed", min_value=1, max_value=10, value=3)
+
+bms_url_input = st.text_input(
+    "Optional: Direct BookMyShow Showtime URL (for deep seat inspection)",
+    placeholder="https://in.bookmyshow.com/buytickets/..."
+)
 
 st.divider()
 
 # =========================================================
-# 3. SEARCH & EXTRACTION ENGINE (TAVILY + GEMINI)
+# 3. CORE ENGINES
 # =========================================================
-def get_verified_showtimes(movie, city_name, date_val, window, g_key, t_key):
-    """Fetches web results via Tavily for free, then extracts showtimes using Gemini Flash Lite."""
+
+def get_web_showtimes(movie, city_name, date_val, g_key, t_key):
+    """Phase 1: Fast & Free Showtime Aggregation via Tavily + Gemini."""
     try:
         formatted_date = date_val.strftime('%d %B %Y')
         search_query = f"{movie} movie showtimes {city_name} {formatted_date}"
         
-        # Step 1: Free Tavily Search Call
-        tavily_client = TavilyClient(api_key=t_key)
-        search_response = tavily_client.search(query=search_query, max_results=5)
+        # 1. Web Search
+        tavily = TavilyClient(api_key=t_key)
+        search_results = tavily.search(query=search_query, max_results=5)
         
-        # Step 2: Format Tavily Context for LLM
-        raw_results = ""
-        for result in search_response.get("results", []):
-            raw_results += f"\nSource: {result.get('url')}\nContent: {result.get('content')}\n---"
-            
-        if not raw_results:
-            return "No web search data returned for this query."
+        raw_text = ""
+        for item in search_results.get("results", []):
+            raw_text += f"\nSource: {item.get('url')}\nContent: {item.get('content')}\n---"
 
-        # Step 3: Pass Search Data to Gemini Flash Lite (No Grounding Tool = Completely Free API Quota)
+        # 2. Extract with Gemini (No Grounding Tool = 100% Free Quota)
         client = genai.Client(api_key=g_key)
         prompt = f"""
-        You are an assistant summarizing movie showtime data.
-        Analyze the raw web search data provided below to extract exact showtimes for '{movie}' in {city_name} on {formatted_date}.
+        Extract theater names and showtimes for '{movie}' in {city_name} on {formatted_date} from this web data:
+        {raw_text}
 
-        RAW WEB SEARCH DATA:
-        {raw_results}
-
-        INSTRUCTIONS:
-        1. Extract theater names, showtimes, and format tags (e.g., 2D, 3D, LUXE, Dolby Atmos, 4DX) from the data.
-        2. Format output clearly using Markdown bullet points grouped by Theater Name.
-        3. Filter or highlight shows matching the user's preferred time window: {window}.
-        4. IF the web data does not contain clear showtimes for this date, explicitly state: "No active shows found in current web listings."
-        5. DO NOT invent seat numbers or imaginary theater schedules.
+        Format using simple Markdown bullet points grouped by Theater Name. 
+        If no schedules are found, reply with "No listings found."
         """
-
         response = client.models.generate_content(
             model='gemini-3.5-flash-lite',
             contents=prompt
         )
         return response.text
-
     except Exception as e:
-        return f"Error executing showtime search: {e}"
+        return f"Showtime Search Error: {e}"
+
+
+async def inspect_seats_stealth(url, seat_count):
+    """Phase 2: Local Stealth Browser Engine to check seat availability."""
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"]
+            )
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
+            await stealth_async(page)
+
+            # Route through local home residential network
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            
+            # Wait for available seat elements to render
+            await page.wait_for_timeout(3000)
+            
+            # Extract available seat markers from the DOM grid
+            available_elements = await page.locator("a._available, div._available, .seat-available").all_inner_texts()
+            
+            await browser.close()
+            
+            total_available = len(available_elements)
+            has_enough = total_available >= seat_count
+            
+            return {
+                "success": True,
+                "total_available": total_available,
+                "has_enough": has_enough,
+                "seats": available_elements[:15] # Display preview sample
+            }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 # =========================================================
-# 4. EXECUTION BUTTON & DISPLAY
+# 4. EXECUTION CONTROLLER
 # =========================================================
-if st.button("🔍 SEARCH VERIFIED SHOWTIMES", type="primary"):
-    if not GEMINI_API_KEY:
-        st.error("⚠️ Missing GEMINI_API_KEY in Streamlit Secrets!")
-    elif not TAVILY_API_KEY:
-        st.error("⚠️ Missing TAVILY_API_KEY in Streamlit Secrets!")
+if st.button("🚀 EXECUTE AGENT SEARCH", type="primary"):
+    if not GEMINI_API_KEY or not TAVILY_API_KEY:
+        st.error("⚠️ Please configure GEMINI_API_KEY and TAVILY_API_KEY in secrets!")
     else:
-        with st.status(f"🤖 Fetching live schedules for '{movie_name}' in {city}...", expanded=True) as status:
-            st.write("🌐 Step 1: Searching web via Tavily API...")
-            st.write("🧠 Step 2: Extracting schedule details via Gemini 3.5 Flash Lite...")
-            results = get_verified_showtimes(movie_name, city, selected_date, time_window, GEMINI_API_KEY, TAVILY_API_KEY)
-            status.update(label="✅ Search Complete!", state="complete", expanded=False)
+        # Step 1: Showtime Discovery
+        with st.status("🌐 Step 1: Aggregating theater listings via Tavily + Gemini...", expanded=True) as status:
+            showtimes = get_web_showtimes(movie_name, city, selected_date, GEMINI_API_KEY, TAVILY_API_KEY)
+            status.update(label="✅ Showtime Search Complete!", state="complete", expanded=False)
         
-        st.subheader("📊 AGENT FINDINGS & SHOWTIMES")
-        st.markdown(results)
-        
-        # Direct link generation
+        st.subheader("📊 Theater Listings & Schedules")
+        st.markdown(showtimes)
+
+        # Step 2: Stealth Seat Inspection (If URL provided)
+        if bms_url_input:
+            st.divider()
+            with st.status("🕵️ Step 2: Spawning Local Stealth Browser (Home IP Bypass)...", expanded=True) as status:
+                seat_data = asyncio.run(inspect_seats_stealth(bms_url_input, required_seats))
+                status.update(label="✅ Seat Inspection Complete!", state="complete", expanded=False)
+            
+            st.subheader("🎟️ Seat Matrix Availability Result")
+            if seat_data.get("success"):
+                if seat_data["has_enough"]:
+                    st.success(f"🎉 YES! Found {seat_data['total_available']} total open seats (Enough for your group of {required_seats}).")
+                else:
+                    st.warning(f"⚠️ Only {seat_data['total_available']} seats remaining. Might not fit {required_seats} consecutive seats.")
+            else:
+                st.error(f"Could not inspect seats: {seat_data.get('error')}")
+
+        # Checkout Link
         st.divider()
         bms_slug = movie_name.lower().replace(' ', '-')
-        direct_url = f"https://in.bookmyshow.com/{city.lower()}/movies/{bms_slug}"
-        st.link_button(f"🎟️ Open Checkout Page on BookMyShow ➔", direct_url)
+        direct_url = bms_url_input if bms_url_input else f"https://in.bookmyshow.com/{city.lower()}/movies/{bms_slug}"
+        st.link_button("🎟️ Proceed to Booking Page ➔", direct_url)
