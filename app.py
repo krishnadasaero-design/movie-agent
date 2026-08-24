@@ -6,13 +6,11 @@ from datetime import datetime
 
 # --- AUTO-INSTALL PLAYWRIGHT BINARIES ON STREAMLIT CLOUD ---
 def ensure_playwright_browsers():
-    """Ensures Chromium binaries are installed inside the cloud Linux environment."""
     try:
         subprocess.run(["playwright", "install", "chromium"], check=True)
     except Exception as e:
         print(f"Playwright binary install note: {e}")
 
-# Run binary check automatically on app launch
 ensure_playwright_browsers()
 
 from playwright.sync_api import sync_playwright
@@ -75,14 +73,12 @@ st.markdown("""
 st.markdown("<p class='hero-title'>🍿 KD's Movie Night Agent</p>", unsafe_allow_html=True)
 st.markdown("<p class='hero-sub'>Real-Time Cinema Seat & Price Intelligence</p>", unsafe_allow_html=True)
 
-# Movie Stars Banner (Mollywood, Bollywood, Hollywood Visuals)
 st.markdown("""
     <div class='star-badge'>
         🌟 <b>Cinema Legends Hub:</b> Mohanlal • Mammootty • Shah Rukh Khan • Cillian Murphy • Zendaya 🌟
     </div>
 """, unsafe_allow_html=True)
 
-# Cinematic Cover Banner
 st.image(
     "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?q=80&w=1000&auto=format&fit=crop", 
     caption="Live Theater Layout & Single-Row Consecutive Seat Finder",
@@ -116,9 +112,8 @@ with col5:
 
 st.caption(f"🎯 **Single-Row Rule Active:** Searching specifically for **{party_size} consecutive seats in a single row**.")
 
-# --- PLAYWRIGHT LIVE SCRAPER FUNCTION ---
+# --- PLAYWRIGHT SCRAPER AUTOMATION ---
 def run_live_agent(search_movie, search_city):
-    """Launches Playwright safely on Linux/Cloud environments to capture theater search."""
     snapshot_filename = "live_movie_search.png"
     
     try:
@@ -133,21 +128,33 @@ def run_live_agent(search_movie, search_city):
             )
             page = context.new_page()
 
-            # Step 1: Open city page
+            # Step 1: Open city homepage
             url = f"https://in.bookmyshow.com/explore/home/{search_city.lower()}"
             page.goto(url, wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(3000)
 
-            # Step 2: Try to dynamically search for the movie title
+            # Step 2: Search and click directly on the movie poster/title card if visible
             try:
-                search_box = page.locator("input[placeholder*='Search']")
-                if search_box.count() > 0:
-                    search_box.fill(search_movie)
-                    page.wait_for_timeout(1500)
-                    page.keyboard.press("Enter")
-                    page.wait_for_timeout(3000)
-            except Exception as nav_err:
-                print(f"Navigation search note: {nav_err}")
+                # Try finding exact text matching the movie on the home screen
+                movie_card = page.locator(f"text='{search_movie}'").first
+                if movie_card.count() > 0:
+                    movie_card.click()
+                    page.wait_for_timeout(4000)
+                else:
+                    # Fallback to search bar interaction
+                    search_trigger = page.locator("div:has-text('Search for Movies')").last
+                    if search_trigger.count() > 0:
+                        search_trigger.click()
+                        page.wait_for_timeout(1000)
+                    
+                    search_input = page.locator("input[placeholder*='Search']")
+                    if search_input.count() > 0:
+                        search_input.fill(search_movie)
+                        page.wait_for_timeout(2000)
+                        page.keyboard.press("Enter")
+                        page.wait_for_timeout(4000)
+            except Exception as e:
+                print(f"Navigation click note: {e}")
 
             page.screenshot(path=snapshot_filename)
             browser.close()
@@ -163,18 +170,18 @@ if st.button("🔍 SEARCH LIVE SEATS & PRICING", type="primary"):
     else:
         st.info(f"Agent executing live check for **'{movie_name}'** in **{city}**...")
         
-        with st.spinner("Navigating theater booking pages..."):
+        with st.spinner("Navigating to live showtimes..."):
             saved_img = run_live_agent(movie_name, city)
             
         if saved_img:
             st.success("Live Scan Complete!")
             st.divider()
             
-            st.subheader(f"🍿 Live Search Results for '{movie_name}'")
+            st.subheader(f"🍿 Live Booking Status for '{movie_name}'")
             
             with st.container(border=True):
-                st.markdown("### 📸 Live Booking Map / Search Verification")
+                st.markdown("### 📸 Live Screen / Theater Status Snapshot")
                 st.image(saved_img, caption=f"Live capture for '{movie_name}' in {city}", use_container_width=True)
                 
-                bms_url = f"https://in.bookmyshow.com/explore/home/{city.lower()}"
-                st.link_button(f"🎟️ Open Live Bookings on BookMyShow ({city}) ➔", bms_url)
+                bms_url = f"https://in.bookmyshow.com/explore/home/{search_city.lower() if 'search_city' in locals() else city.lower()}"
+                st.link_button(f"🎟️ Open Direct Bookings on BookMyShow ({city}) ➔", bms_url)
