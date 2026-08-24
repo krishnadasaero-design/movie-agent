@@ -25,9 +25,6 @@ st.markdown("""
     .stButton>button:hover { background-color: #b20710; color: white; }
     .hero-title { text-align: center; color: #f5c518; font-weight: 900; font-size: 32px; margin-bottom: 0px; }
     .hero-sub { text-align: center; font-size: 13px; color: #a0aec0; margin-bottom: 15px; }
-    .booking-card {
-        background-color: #1a1f2c; padding: 15px; border-radius: 10px; border-left: 4px solid #e50914; margin-bottom: 10px;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -61,7 +58,7 @@ st.divider()
 # 3. REAL-TIME SEARCH & EXTRACTION ENGINE
 # =========================================================
 def get_verified_showtimes(movie, city_name, date_val, window, api_key):
-    """Uses Google Search grounding via Gemini to fetch verified active showtimes."""
+    """Uses Google Search grounding via Gemini 3.6 Flash to fetch verified active showtimes."""
     try:
         client = genai.Client(api_key=api_key)
         
@@ -78,9 +75,9 @@ def get_verified_showtimes(movie, city_name, date_val, window, api_key):
         5. DO NOT invent fake seat numbers (like Row F) or dummy showtimes. Present ONLY verified factual entries.
         """
         
-        # Call Gemini with Google Search tool enabled
+        # Call Gemini 3.6 Flash with Google Search tool enabled
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.6-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 tools=[{"google_search": {}}]
@@ -98,14 +95,14 @@ if st.button("🔍 SEARCH VERIFIED SHOWTIMES", type="primary"):
         st.error("⚠️ Please configure GEMINI_API_KEY in Streamlit Secrets!")
     else:
         with st.status(f"🤖 Searching active schedules for '{movie_name}' in {city}...", expanded=True) as status:
-            st.write("🌐 Step 1: Querying web indexes for multiplex listings...")
+            st.write("🌐 Step 1: Querying web search indexes for current listings...")
             results = get_verified_showtimes(movie_name, city, selected_date, time_window, GEMINI_API_KEY)
             status.update(label="✅ Search Complete!", state="complete", expanded=False)
         
         st.subheader("📊 AGENT FINDINGS & SHOWTIMES")
         st.markdown(results)
         
-        # Clean direct checkout link generation
+        # Direct link generation
         st.divider()
         bms_slug = movie_name.lower().replace(' ', '-')
         direct_url = f"https://in.bookmyshow.com/{city.lower()}/movies/{bms_slug}"
